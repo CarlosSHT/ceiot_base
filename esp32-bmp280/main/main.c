@@ -8,6 +8,7 @@
 */
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -28,12 +29,16 @@
 /* HTTP Constants that aren't configurable in menuconfig */
 #define WEB_PATH "/measurement"
 
+/* Device ID GPIO LIST */
+uint8_t gpioID_list[] = {18,5,4,25,26,27,14,13};
+uint8_t size_gpioList = sizeof(gpioID_list)/sizeof(uint8_t);
+
 static const char *TAG = "temp_collector";
 
-//static char *BODY = "id="DEVICE_ID"&t=%0.2f&h=%0.2f&p=%0.2f";
+//static char *BODY = "id="DEVICE_ID"_%03d&t=%0.2f&h=%0.2f&p=%0.2f";
 
-//static char *BODY = "{\"id\": \""DEVICE_ID"\",\"t\": %0.2f,\"h\": %0.2f,\"p\": %0.2f}";
-static char *BODY = "{\"id\": \""DEVICE_ID"\",\"t\": \"%0.2f\",\"h\": \"%0.2f\",\"p\": \"%0.2f\"}";
+//static char *BODY = "{\"id\": \""DEVICE_ID_%03d"\",\"t\": %0.2f,\"h\": %0.2f,\"p\": %0.2f}";
+static char *BODY = "{\"id\": \""DEVICE_ID"_%03d\",\"t\": \"%0.2f\",\"h\": \"%0.2f\",\"p\": \"%0.2f\"}";
 
 static char *REQUEST_POST = "POST "WEB_PATH" HTTP/1.0\r\n"
     "Host: "API_IP_PORT"\r\n"
@@ -43,6 +48,35 @@ static char *REQUEST_POST = "POST "WEB_PATH" HTTP/1.0\r\n"
     "Content-Length: %d\r\n"
     "\r\n"
     "%s";
+
+static void setup_ID_gpios(void)
+{
+    uint64_t mask_IDgpio = 0;
+    for (uint8_t i = 0; i < size_gpioList; i++)
+    {
+        mask_IDgpio = (1<<gpioID_list[i]) | mask_IDgpio;
+    }
+
+    gpio_config_t io_conf = {};
+
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.pin_bit_mask = mask_IDgpio;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+}
+
+static int get_GPIO_ID(void)
+{
+    uint8_t gpioID_val=0;
+
+    for (uint8_t i = 0; i < size_gpioList; i++)
+    {
+    	gpioID_val = ( gpio_get_level(gpioID_list[i]) << (size_gpioList-(i+1)) ) + gpioID_val;
+    }
+
+    return gpioID_val;
+}
 
 static void http_get_task(void *pvParameters)
 {
@@ -57,6 +91,11 @@ static void http_get_task(void *pvParameters)
     char recv_buf[64];
 
     char send_buf[256];
+
+    uint8_t val_IDgpio=0;
+
+    setup_ID_gpios();
+    val_IDgpio = get_GPIO_ID();
 
     bmp280_params_t params;
     bmp280_init_default_params(&params);
@@ -79,7 +118,8 @@ static void http_get_task(void *pvParameters)
             ESP_LOGI(TAG, "Pressure: %.2f Pa, Temperature: %.2f C", pressure, temperature);
 //            if (bme280p) {
                 ESP_LOGI(TAG,", Humidity: %.2f\n", humidity);
-                sprintf(body, BODY, temperature , humidity , pressure);
+		val_IDgpio = get_GPIO_ID();
+                sprintf(body, BODY, val_IDgpio , temperature , humidity , pressure);
                 sprintf(send_buf, REQUEST_POST, (int)strlen(body),body );
 //	    } else {
 //                sprintf(send_buf, REQUEST_POST, temperature , 0);
